@@ -23,6 +23,7 @@ $ ls
 [3] notes from review.txt
 [4] src
 
+$ cd 2
 $ cat 3
      1  review notes
 $ cp 1,3 backup/
@@ -147,8 +148,10 @@ best-effort compatibility with every `ls` implementation.
 - Layout: one entry per line. Add `--oneline` to the alias; grid, tree,
   recursive, and multi-directory layouts are not part of the supported output
   contract yet.
-- Consumers: `cp`, `mv`, `rm`, `cat`, `less`, `stat`, `diff`, `chmod`, `chown`,
-  `ln`, `file`, `wc`, and `du`, including simple command-prefix aliases.
+- Consumers: `cd`, `cp`, `mv`, `rm`, `cat`, `less`, `stat`, `diff`, `chmod`,
+  `chown`, `ln`, `file`, `wc`, and `du`, including simple command-prefix
+  aliases. `cd` is resolved in the current shell so the directory change
+  persists.
 - Git producer: exactly `git status` with no status options. Git's stable
   `--porcelain=v2 -z --branch` output remains the source of truth; `nth` groups
   those records into staged, unstaged, unmerged, and untracked sections. It
@@ -224,6 +227,13 @@ find . -type f -print0 | nth capture -0 --absolute
 
 ```sh
 nth exec -- printf '%s\n' 1,3-5
+```
+
+`resolve` is the NUL-delimited expansion interface used by shell functions
+such as `cd`, which must run in the current shell:
+
+```sh
+nth resolve -- 1
 ```
 
 Selectors may be a number (`3`), an inclusive range (`2-5`), a comma-separated

@@ -633,3 +633,97 @@ fn exec_without_selectors_does_not_require_existing_state() {
     assert!(output.status.success());
     assert_eq!(output.stdout, b"ordinary");
 }
+
+#[test]
+fn resolve_writes_expanded_arguments_as_nul_delimited_records() {
+    let sandbox = Sandbox::new();
+    let mut capture = sandbox
+        .command()
+        .arg("capture")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    capture
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"alpha\ntwo words\n")
+        .unwrap();
+    assert!(capture.wait().unwrap().success());
+
+    let output = sandbox
+        .command()
+        .args(["resolve", "--", "2", "literal"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"\0two words\0literal\0");
+}
+
+fn shell_cd_expands_directory_shortcut(shell: &str, shell_args: &[&str], init: &str) {
+    let sandbox = Sandbox::new();
+    let first = sandbox.root.join("first");
+    let second = sandbox.root.join("two words");
+    fs::create_dir(&first).unwrap();
+    fs::create_dir(&second).unwrap();
+
+    let mut capture = sandbox
+        .command()
+        .args(["capture", "--absolute"])
+        .current_dir(&sandbox.root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    capture
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"first\ntwo words\n")
+        .unwrap();
+    assert!(capture.wait().unwrap().success());
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_nth"));
+    let script = init.replace("{nth}", &binary.display().to_string());
+    let output = Command::new(shell)
+        .args(shell_args)
+        .arg(script)
+        .current_dir(&sandbox.root)
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("NTH_STATE_DIR", sandbox.root.join("state"))
+        .env("NTH_SESSION", "integration-test")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let second = fs::canonicalize(second).unwrap();
+    assert_eq!(output.stdout, format!("{}\n", second.display()).as_bytes());
+}
+
+#[test]
+fn bash_cd_expands_directory_shortcut_in_the_current_shell() {
+    shell_cd_expands_directory_shortcut(
+        "bash",
+        &["--noprofile", "--norc", "-c"],
+        "shopt -s expand_aliases; alias cd='cd -P'; eval \"$('{nth}' init bash)\"; cd 2; pwd -P",
+    );
+}
+
+#[test]
+fn fish_cd_expands_directory_shortcut_in_the_current_shell() {
+    if Command::new("fish").arg("--version").output().is_err() {
+        return;
+    }
+    shell_cd_expands_directory_shortcut(
+        "fish",
+        &["--no-config", "-c"],
+        "alias cd 'cd -P'; '{nth}' init fish | source; cd 2; pwd -P",
+    );
+}

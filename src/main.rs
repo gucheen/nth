@@ -74,6 +74,7 @@ fn run<R: Read, W: Write, E: Write>(
         "git-status" => run_git_status(&args[1..], &mut stdout),
         "git-list" => run_git_list(&args[1..], &mut stdout),
         "exec" | "x" => run_exec(&args[1..]),
+        "resolve" => run_resolve(&args[1..], &mut stdout),
         "show" => run_show(&mut stdout),
         "clear" => state::clear().map_err(AppError::new),
         "init" => run_init(&args[1..], &mut stdout),
@@ -1003,6 +1004,21 @@ fn run_exec(args: &[OsString]) -> Result<(), AppError> {
     }
 }
 
+fn run_resolve<W: Write>(args: &[OsString], output: &mut W) -> Result<(), AppError> {
+    let args = if args.first().is_some_and(|arg| arg == "--") {
+        &args[1..]
+    } else {
+        args
+    };
+    let expanded = expand_current(args)?;
+    output.write_all(&[0])?;
+    for arg in expanded {
+        output.write_all(os_bytes(&arg))?;
+        output.write_all(&[0])?;
+    }
+    Ok(())
+}
+
 fn expand_current(args: &[OsString]) -> Result<Vec<OsString>, AppError> {
     let items = if selector::contains_selector(args) {
         state::load().map_err(AppError::new)?.items
@@ -1143,6 +1159,30 @@ _nth_dispatch_git() {
   fi
 }
 
+_nth_dispatch_cd() {
+  local variable="_nth_original_cd"
+  local definition="${!variable}"
+  local -a original resolved
+  local value
+  local resolved_ok=0
+  eval "original=( $definition )" || return 2
+
+  while IFS= read -r -d '' value; do
+    if [[ "$resolved_ok" -eq 0 ]]; then
+      resolved_ok=1
+    else
+      resolved+=("$value")
+    fi
+  done < <(command "$_nth_binary" resolve -- "$@")
+  [[ "$resolved_ok" -eq 1 ]] || return 1
+
+  if [[ "${original[0]}" == cd ]]; then
+    builtin cd "${original[@]:1}" "${resolved[@]}"
+  else
+    "${original[@]}" "${resolved[@]}"
+  fi
+}
+
 _nth_wrap_command() {
   local name="$1" mode="$2"
   _nth_remember_command "$name" || return
@@ -1153,6 +1193,9 @@ _nth_wrap_command ls observe
 for _nth_name in cp mv rm cat less stat diff chmod chown ln file wc du; do
   _nth_wrap_command "$_nth_name" exec
 done
+if _nth_remember_command cd; then
+  eval 'cd() { _nth_dispatch_cd "$@"; }'
+fi
 if _nth_remember_command git; then
   git() { _nth_dispatch_git "$@"; }
 fi
@@ -1245,6 +1288,41 @@ function _nth_dispatch_git
   end
 end
 
+function _nth_wrap_cd
+  functions -q _nth_original_cd
+  and return
+  if functions -q cd
+    set -l definition (functions cd)
+    set -l details (functions --details --verbose cd)
+    set -l alias_pattern "--description 'alias cd[ =](.*)'"
+    set -l alias_command (string match -r --groups-only -- $alias_pattern $definition)
+    if test -z "$alias_command"; and not contains -- autoloaded $details
+      printf 'nth: leaving existing cd function unchanged; function adapters are not supported\n' >&2
+      return 1
+    end
+    functions --copy cd _nth_original_cd
+  else
+    function _nth_original_cd
+      builtin cd $argv
+    end
+  end
+
+  function cd --description 'nth shortcut-aware directory change'
+    set -l resolved
+    set -l resolved_ok 0
+    command $_nth_binary resolve -- $argv | while read --null value
+      if test $resolved_ok -eq 0
+        set resolved_ok 1
+      else
+        set -a resolved "$value"
+      end
+    end
+    test $resolved_ok -eq 1
+    or return 1
+    _nth_original_cd $resolved
+  end
+end
+
 function _nth_wrap_command --argument-names name mode
   _nth_remember_command $name
   or return
@@ -1255,9 +1333,10 @@ _nth_wrap_command ls observe
 for _nth_name in cp mv rm cat less stat diff chmod chown ln file wc du
   _nth_wrap_command $_nth_name exec
 end
+_nth_wrap_cd
 _nth_wrap_command git git
 set -e _nth_name
-functions --erase _nth_wrap_command _nth_remember_command
+functions --erase _nth_wrap_cd _nth_wrap_command _nth_remember_command
 
 function ncap; command $_nth_binary capture $argv; end
 function nx; command $_nth_binary exec -- $argv; end
@@ -1277,6 +1356,7 @@ Usage:
   nth git-status -- git [global args]    preserve git status and append shortcuts
   nth git-list KIND -- git [global args] number branches, commits, stashes, or worktrees
   nth exec -- command [args ...]        expand selectors and run a command
+  nth resolve -- [args ...]             write expanded arguments as NUL-delimited records
   nth show                              show the current shortcut table
   nth clear                             discard the current shortcut table
   nth init bash|fish                    print shell integration
@@ -1393,6 +1473,8 @@ mod tests {
             "_nth_wrap_command ls observe",
             "command \"$_nth_binary\" observe",
             "command \"$_nth_binary\" exec",
+            "command \"$_nth_binary\" resolve",
+            "_nth_dispatch_cd",
             "number_output",
             "! -t 1",
             "git-list branch",
@@ -1417,6 +1499,8 @@ mod tests {
             "set -g _nth_binary",
             "_nth_wrap_command ls observe",
             "command $_nth_binary exec",
+            "command $_nth_binary resolve",
+            "_nth_wrap_cd",
             "number_output",
             "status is-interactive",
             "not isatty stdout",
