@@ -1,0 +1,18 @@
+[package]
+name = "nth"
+version = "0.1.0"
+edition = "2024"
+description = "Fast numeric shortcuts for command-line output"
+license = "MIT"
+repository = "https://github.com/gucheng01/nth"
+keywords = ["cli", "shell", "unix", "productivity"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+libc = "0.2.189"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = true
