@@ -6,6 +6,8 @@
 the user's configured command remains the producer. `nth` does not implement a
 replacement for `ls`, `eza`, `lsd`, or any other command.
 
+[![asciicast](https://asciinema.org/a/TtlsOG7FkOlVBmua.svg)](https://asciinema.org/a/TtlsOG7FkOlVBmua)
+
 With Bash integration loaded after your aliases:
 
 ```bash
